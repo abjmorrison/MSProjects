@@ -1,0 +1,236 @@
+*This project used Monte Carlo methods in SAS to estimate the probability of humans or canines acquiring Giardiasis as the result of 
+visiting public parks in Bloomington, IN*;
+
+proc datasets library=WORK kill; run; quit;
+
+
+data seir;
+
+***Initial Variables and Lognormal Transformations***;
+S0 = .9; *initial value of susceptible fraction;
+I0 = .1; *initial value of infected fraction ;
+C0 = (.1*33*(40/28)*1150)*25; *Initial value of cysts assumes a baseline cyst life of 25 days eg 35 days of cysts accumulate;
+E0 = 0.01;
+
+*Time Infected lognormal;
+mr = 30; vr = 15; 
+p = sqrt(vr + mr**2);
+mG1 = log(mr**2/p);
+sG1 = sqrt(log(p**2/mr**2));
+mr3 = 35; vr3 = 8.75; 
+p3 = sqrt(vr3 + mr3**2);
+mG2 = log(mr3**2/p3);
+sG2 = sqrt(log(p3**2/mr3**2));
+
+*Dog Visits lognormal;
+mq = 4; vq = 2; 
+pq = sqrt(vq + mq**2);
+mDV = log(mq**2/pq);
+sDV = sqrt(log(pq**2/mq**2));
+
+*Times poop per day lognormal ;
+mm = 1; vv = 2; 
+pp = sqrt(vv + mm**2);
+mPoo = log(mm**2/pp);
+sPoo = sqrt(log(pp**2/mm**2));
+
+*Exposure time;
+mr2 = 12; vr2 = 4.5; *Range rule 3-21 days until shedding (http://www.cfsph.iastate.edu/Factsheets/pdfs/giardiasis.pdf);
+p2 = sqrt(vr2 + mr2**2);
+mE = log(mr2**2/p2);
+sE = sqrt(log(p2**2/mr2**2));
+
+***Model one year of disease propagation***;
+
+call streaminit(1234567);
+ 
+do Day = 1 to 365;
+
+	h = 1;
+
+	G = .47*(1/exp(rand('normal',mG1,sG1)))+.53*(1/exp(rand('normal',mG2,sG2))); 
+	G0 = G;
+
+	Poo = exp(rand('normal',mPoo,sPoo));  
+	PickupRate = .3325; *0.3325; *Mean estimated feces pick up rate;
+	Err = 0.124; *0.124; 
+	B = Poo*PickupRate*Err; 
+
+	E = (1/exp(rand('normal',mE,sE))); *S0 - rate that exposures become infecteds;
+
+	dR = G*I0;
+	dS = S0+(S0+(-B*S0*I0)+dR);
+	dE = E0+(B*S0*I0 - E*E0);
+	dI = I0+(E*E0 - G*I0);
+	
+	I0 = dI; 
+	E0 = dE;
+	S0 = 1-I0-E0;
+
+output; 
+end;
+keep C0 I0 Poo PickupRate Err;
+run;
+
+data EVsoil;
+set seir;
+
+*Dogs; 
+mb = 120; vb = 80; **transforms number of times a ;
+pb = sqrt(vb + mb**2);
+mDogs = log(mb**2/pb);
+sDogs = sqrt(log(pb**2/mb**2));
+
+*Cysts lognormal;
+mc = 1150; vc= 275; *total number of cysts released by an individual per day;
+pc = sqrt(vc + mc**2);
+mC = log(mc**2/pc);
+sC = sqrt(log(pc**2/mc**2));
+
+*Dog Weight lognormal;
+mdw1 = 40; vdw = 41.25; 
+pdw = sqrt(vdw + mdw1**2);
+mdw = log(mdw1**2/pdw);
+sdw = sqrt(log(pdw**2/mdw1**2));
+
+call streaminit(1234567);
+do I = 1 to 100;
+	Dogs = exp(rand('normal',mDogs,sDogs)); *infected of dogs in BP per day;
+
+	Season = 1/1; 
+	*Baseline 1 = Summer > Divide by factor to get seasonal multiplier
+	1	Winter
+	2.9	Spring
+	4.5	Summer
+	1.6	Fall; *Seasonal factor is a relative probability;
+	*Max Dogs = 1*5.5;
+
+	PR = exp(rand('normal',mdw,sdw))*28.3495 ; *1 oz per lbs of body weight, which is lognormally distributed rv;
+	PoopRelease = PR*I0*Dogs*Season*.3325; *Gives the mass of dog poop released in Btown per day*;
+
+	CR = exp(rand('normal', mC,sC)); *cysts per grams of poop released;
+	CystsIn = CR*PoopRelease;  *total cysts released; 
+	CystsOut = (1/25)*C0+(PickupRate*Err*C0);
+	NetCysts = C0 + CystsIn - CystsOut;
+	C0 = NetCysts;
+
+	Area = 27008+(1290*2); *m2;
+	PrArea = Area/116465;
+	SoilDen = 1.6; *g/cm3;
+
+	MassSoil = Area*10000*SoilDen*1000; *27008m2*convert t cm2*1cm deep topsoil*1.6g/cm3; *= mg of soil ;
+	EVSoil = NetCysts/MassSoil; 
+
+output;
+end;
+
+keep I0 Dogs Poo PR CR NetCysts Area PrArea EVSoil PoopRelease;
+run;
+
+Data baseline;
+set EVSoil;
+
+*Soil Ingestion;
+*ms = 122; *vs = 100;  ms = 207; vs = 100; 
+ps = sqrt(vs + ms**2);
+mSIC = log(ms**2/ps);
+sSIC = sqrt(log(ps**2/ms**2));
+
+*msa = 324;* vsa = 162;   msa = 625; vsa = 162;
+psa = sqrt(vsa + msa**2);
+mSIA = log(msa**2/psa);
+sSIA = sqrt(log(psa**2/msa**2));
+
+*Drinking lognormal;
+mdrink = 10; vdrink = 100; 
+pdrink = sqrt(vdrink + mdrink**2);
+mCx = log(mdrink**2/pdrink);
+sCx = sqrt(log(pdrink**2/mdrink**2));
+
+*Soil Paws lognormal;
+mpaw =3; vpaw =25; 
+ppaw = sqrt(vpaw + mpaw**2);
+mPaws = log(mpaw**2/ppaw);
+sPaws = sqrt(log(ppaw**2/mpaw**2));
+
+call streaminit(1234567);
+do i = 1 to 100;
+
+************** HUMAN EXPOSURE ASSESSMENT*********************;
+
+	IR1 = exp(rand('normal',mSIA,sSIA));
+	IR2 = exp(rand('normal',mSIC,sSIC));
+	IR = IR1+IR2; 
+
+	ADDC = EVSoil*IR1; *ADD Children;
+	ADDA =  EVSoil*IR2; *ADD Adults;
+	ADD = EVSoil*IR;
+
+************** DOG EXPOSURE ASSESSMENT*********************
+	*Pathway: Coprophagia;
+	PoopIngestion = (PR*Dogs*I0)/(Poo*Dogs); 
+	*Assume a dog eats about half of a given poop g ingested / poops = g per poop (assume ingest 1 poop;
+	*Cysts per gram*g per poop = cysts ingested for 1 poop;
+
+	AreaPoops = (36/1550)*Poo*Dogs*.3325; *Est total sq m of poop;
+	PrAreaPoops = AreaPoops/Area;
+	CystIngestion = CR*PoopIngestion; *only eat fresh poop, no accumulation, eats half;
+	Range = 1290*2;  *1290*2;*27008; *Area most likely to range in an outing;
+	EVCopro = PrArea*PrAreaPoops*Range*CystIngestion; *EV Cysts ingested;*Assumes dogs eat 1 poop per visit;
+
+	*Pathway: Step in poop > lick paws;
+	CystsPerPoop = CystIngestion*.05*.25*.5; *assume 5% sticks then 75% falls off and
+	half gets eaten;
+	PoopPaws = PrAreaPoops*(4*Range);
+	EVPaws = PrArea*PoopPaws*CystsPerPoop; 
+
+	*Pathway: Eat grass and lick soil off paws;
+	GrassConsume = (1.1*60)*(0.25/1.60); *Dogs spend approximately 1.1 minutes consuming grass, assumes 0.25cm3 per second;
+	SoilPaws = exp(rand('normal',mPaws,sPaws));
+	EVSoilDogs = EVSoil*(SoilPaws+GrassConsume);
+
+	Coprophagia = rand('bernoulli',.16);
+
+	ADDDogs = (Coprophagia*EVCopro)+EVPaws+EVSoilDogs;
+
+	if ADDA > 300 then DoseA=.; else DoseA=ADDA;
+	if ADDC > 300 then DoseC=.; else DoseC=ADDC; 
+	if ADDDogs > 100000 then DoseD=.; else DoseD=ADDDogs;
+
+	***Weibull Distribution**;
+	alpha = .0131219;
+	beta = 0.0714286;
+
+	WeibullA = (beta+((1-beta)*(1-exp(-alpha*(ADD)))));
+
+	***Poisson Disribution***;
+	a = 1.37/10;
+	N50 = 1.46*10000;
+	PoissonD = 1-(1+ADDDogs*((2**(1/a))-1)/N50)**-a;
+
+output;
+end;
+
+keep ADD WeibullA ADDDogs PoissonD IR;
+run;
+
+proc gplot data=exposure;
+   plot WeibullA*DoseA  / overlay legend=legend1
+                             vref=1000 to 5000 by 1000 lvref=2
+                             haxis=axis1 hminor=4
+                             vaxis=axis2 vminor=1;
+run;
+quit;
+*Mean standard dev and 95%; 
+
+proc univariate data=baseline cibasic(alpha=0.05);
+var PoissonD ; 
+run;
+
+proc gchart data=exposure;
+vbar WeibullA;
+run;
+
+proc means data=baseline;
+var PoissonD;
+run;
